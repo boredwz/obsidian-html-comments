@@ -1,134 +1,78 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { Editor, Plugin } from "obsidian";
 
-// Remember to rename these classes and interfaces!
+// TODO:
+//   1. "Keep original selection and cursor position" option (not available when multiple selecting)
+//   2. ...
+// Can be useful: /^[^\r\n]*?(\<\!-- )((?:.|[\r\n])*?)( --\>)[^\r\n]*?$/gm
 
-interface MyPluginSettings {
-	mySetting: string;
+export default class HtmlCommentsPlugin extends Plugin {
+  async onload() {
+    this.addCommand({
+      id: "boredwz-html-comments",
+      name: "Toggle comment <!-- txt -->",
+      editorCallback: (editor: Editor) => main(editor)
+    });
+  }
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+const COMMENT_START = "<!--";
+const COMMENT_END = "-->";
+
+function main(editor: Editor) {
+  const totalSelections = editor.listSelections().length;
+  const cursor = editor.getCursor();
+
+  editor.listSelections().forEach((sel, i) => {
+    const selPos = { anchor: { ...sel.anchor }, head: { ...sel.head } };
+    
+    // Fix reversed selection, ex: {2:10,1:0} -> {1:0,2:10}; {6:11,6:0} -> {6:0,6:11}
+    if (sel.anchor.line > sel.head.line || (sel.anchor.line === sel.head.line && sel.anchor.ch > sel.head.ch)) {
+      selPos.anchor = sel.head;
+      selPos.head = sel.anchor;
+    }
+    
+    // Get text from selection
+    let selText = editor.getRange(selPos.anchor, selPos.head);
+    
+    // If no text selected, get entire line
+    const isNotSelected = selText.length === 0;
+    if (isNotSelected) {
+      selText = editor.getLine(selPos.anchor.line);
+      selPos.anchor.ch = 0;
+      selPos.head.ch = selText.length;
+    }
+
+    // Replace text
+    let txt = commentText(selText);
+    let logJob = "Text -> Comment";
+    let cursorChNew = cursor.ch + COMMENT_START.length + 1; // +space
+    if (isCommented(selText)) {
+      txt = uncommentText(selText);
+      logJob = "Comment -> Text";
+      cursorChNew = cursor.ch - COMMENT_START.length - 1;
+    }
+    editor.replaceRange(txt, selPos.anchor, selPos.head);
+
+    // Restore cursor position (no selection only)
+    if (isNotSelected && totalSelections === 1) {
+		  editor.setCursor({line: cursor.line, ch: cursorChNew});
+    }
+
+    // Output debug info
+    //console.log(`[${i + 1}/${totalSelections}] {${selPos.anchor.line}:${selPos.anchor.ch} ${selPos.head.line}:${selPos.head.ch}} ${logJob}`);
+  });
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
-
-	async onload() {
-		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
-
-	onunload() {
-
-	}
-
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
+function isCommented(text: string): boolean {
+  return text.startsWith(COMMENT_START) && text.endsWith(COMMENT_END);
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
+function commentText(text: string): string {
+  return `${COMMENT_START} ${text} ${COMMENT_END}`;
 }
 
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
-	}
+function uncommentText(text: string): string {
+  return text
+    .slice(COMMENT_START.length, text.length - COMMENT_END.length)
+    .trim();
 }
